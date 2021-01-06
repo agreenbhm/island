@@ -5,11 +5,9 @@ import android.app.ActivityManager
 import android.app.Service
 import android.content.*
 import android.content.Intent.*
-import android.content.pm.ApplicationInfo
-import android.content.pm.LauncherApps
-import android.content.pm.PackageManager.*
-import android.content.pm.ShortcutInfo
-import android.content.pm.ShortcutManager
+import android.content.pm.*
+import android.content.pm.PackageManager.MATCH_UNINSTALLED_PACKAGES
+import android.content.pm.PackageManager.NameNotFoundException
 import android.content.res.Resources
 import android.graphics.Bitmap
 import android.graphics.Bitmap.Config.ARGB_8888
@@ -19,10 +17,12 @@ import android.graphics.drawable.AdaptiveIconDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.Icon
 import android.net.Uri
-import android.os.*
+import android.os.Binder
 import android.os.Build.VERSION.SDK_INT
 import android.os.Build.VERSION_CODES.O
 import android.os.Build.VERSION_CODES.Q
+import android.os.Bundle
+import android.os.UserHandle
 import android.util.Log
 import android.widget.Toast
 import android.widget.Toast.LENGTH_LONG
@@ -51,8 +51,9 @@ object IslandAppShortcut {
 
 	const val ACTION_LAUNCH_CLONE = "com.oasisfeng.island.action.LAUNCH_CLONE"
 	private const val ACTION_LAUNCH_APP = "com.oasisfeng.island.action.LAUNCH_APP"
-	private const val SCHEME_PACKAGE = "package" // Introduced in Island 2.8
-	private const val SCHEME_ANDROID_APP = "android-app" // Introduced in Island 2.8
+	private const val SCHEME_PACKAGE = "package"            // Introduced in Island 2.8
+	private const val SCHEME_ANDROID_APP = "android-app"    // Introduced in Island 5.0 (deprecated)
+	private const val SCHEME_APP = "app"                    // Introduced in Island 5.3 (replacing "android-app" used before to avoid shortcut intent corruption after reboot)
 
 	/** @return true if launcher supports shortcut pinning, false for failure, or null if legacy shortcut installation broadcast is sent. */
 	@OwnerUser @JvmStatic fun requestPin(context: Context, app: IslandAppInfo) {
@@ -89,7 +90,7 @@ object IslandAppShortcut {
 			update(context, sm, app, profile.toId()) }
 	}
 
-	@RequiresApi(O) private fun update(context: Context, sm: ShortcutManager, app: ApplicationInfo, userId: Int) {
+	@OwnerUser @RequiresApi(O) private fun update(context: Context, sm: ShortcutManager, app: ApplicationInfo, userId: Int) {
 		Log.i(TAG, "Updating shortcut for ${app.packageName} in profile $userId")
 		val shortcut = buildShortcutInfo(context, sm, app)
 		sm.updateShortcuts(listOf(shortcut))
@@ -114,14 +115,12 @@ object IslandAppShortcut {
 		val drawable = getAppIconDrawable(context, context.getSystemService()!!, app)
 		return ShortcutInfo.Builder(context, shortcutId).setIntent(intent).setShortLabel(label).apply {
 			setIcon(Icon.createWithAdaptiveBitmap(drawable.toBitmap(sm.iconMaxWidth, sm.iconMaxHeight)))
-			if (isCrossProfile && settings.AlternativeShortcutBadge().enabled)
-				setActivity(ComponentName(context.packageName, "android.__dummy__"))
 			if (SDK_INT >= Q) setLongLived(true).setLocusId(LocusId(shortcutId))
 		}.build()
 	}
 
 	private fun buildShortcutIntent(context: Context, pkg: String, userId: Int) = Intent(ACTION_LAUNCH_APP, Uri.Builder()
-			.scheme(SCHEME_ANDROID_APP).encodedAuthority(if (userId != Users.owner.toId()) "$userId@$pkg" else pkg).build())
+			.scheme(SCHEME_APP).encodedAuthority(if (userId != Users.owner.toId()) "$userId@$pkg" else pkg).build())
 			.addCategory(CATEGORY_LAUNCHER).setPackage(context.packageName)
 
 	private const val SHORTCUT_ID_PREFIX = "launch:"
@@ -208,23 +207,27 @@ object IslandAppShortcut {
 
 		private fun launch(uri: Uri) {
 			when(uri.scheme) {
-				SCHEME_ANDROID_APP -> {
-					val parsed = try { parseUri(uri.toString(), URI_ANDROID_APP_SCHEME) }
-					catch (e: URISyntaxException) { return showInvalidShortcutToast() }
-					val intent = if (! uri.encodedPath.isNullOrEmpty() || uri.encodedFragment != null) parsed else null // Null for pure app launch
-
-					val authority = parsed.getPackage()!!   // Never null, ensured by scheme "android-app"
-					if (! authority.contains('@'))
-						return Unit.also { prepareAndLaunch(this, authority, intent) }
-
-					val pkg = uri.host!!.also { intent?.setPackage(it) }
-					val user = try { uri.userInfo?.toInt()?.let { UserHandles.of(it) } ?: Users.current() }
-					catch (e: NumberFormatException) { return showInvalidShortcutToast() }
-
-					prepareAndLaunch(this, pkg, intent, user) }
+				SCHEME_ANDROID_APP/* legacy */ -> launch0(uri)
+				SCHEME_APP -> launch0(uri.buildUpon().scheme(SCHEME_ANDROID_APP).build())
 
 				SCHEME_PACKAGE -> prepareAndLaunch(this, uri.schemeSpecificPart)
 				else -> showInvalidShortcutToast() }
+		}
+
+		private fun launch0(uri: Uri) {
+			val parsed = try { parseUri(uri.toString(), URI_ANDROID_APP_SCHEME) }
+			catch (e: URISyntaxException) { return showInvalidShortcutToast() }
+			val intent = if (! uri.encodedPath.isNullOrEmpty() || uri.encodedFragment != null) parsed else null // Null for pure app launch
+
+			val authority = parsed.getPackage()!!   // Never null, ensured by scheme "android-app"
+			if (! authority.contains('@'))
+				return Unit.also { prepareAndLaunch(this, authority, intent) }
+
+			val pkg = uri.host!!.also { intent?.setPackage(it) }
+			val user = try { uri.userInfo?.toInt()?.let { UserHandles.of(it) } ?: Users.current() }
+			catch (e: NumberFormatException) { return showInvalidShortcutToast() }
+
+			prepareAndLaunch(this, pkg, intent, user)
 		}
 
 		private fun showInvalidShortcutToast() = Toast.makeText(this, R.string.prompt_invalid_shortcut, LENGTH_LONG).show()
@@ -238,6 +241,18 @@ object IslandAppShortcut {
 		}
 
 		override fun onCreate(savedInstanceState: Bundle?) = super.onCreate(savedInstanceState).also { onNewIntent(intent) }
+	}
+}
+
+class ShortcutsRepairer: BroadcastReceiver() {
+
+	override fun onReceive(context: Context, intent: Intent?) {
+		if (SDK_INT < O || intent?.action != ACTION_MY_PACKAGE_REPLACED && intent?.action != ACTION_BOOT_COMPLETED) return
+		try {
+			IslandAppShortcut.updateAllPinned(context)
+		} catch (e: IllegalStateException) { return }   // User is locked
+		context.packageManager.setComponentEnabledSetting(ComponentName(context, javaClass),
+				PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP)
 	}
 }
 

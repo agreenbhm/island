@@ -6,8 +6,9 @@
     <string name="tab_mainland">Mainland</string>
     <string name="tab_island">Island</string>
     <string name="tab_discovery">Discovery</string>
-    <string name="default_island_name">Island %d</string>
-    <string name="default_island0_name">Island</string>
+    <string name="default_island_name">Island</string>
+    <string name="default_islandN_name">Island %d</string>
+    <string name="default_island0_name">Avalon</string>
     <string name="default_island1_name">Neverland</string>
     <string name="default_island2_name">Atlantis</string>
     <string name="default_island3_name">Penglai</string>
@@ -72,7 +73,6 @@ the sandbox environment. Island never collect data related to your privacy, plea
     <string name="button_setup_island_with_root">Setup Island with root</string>
 
     <string name="action_clone">Clone</string>
-    <string name="action_clone_back">Clone to mainland</string>
     <string name="action_freeze">Freeze</string>
     <string name="action_unfreeze">Unfreeze</string>
     <string name="action_shortcut">Create Unfreeze &amp; Launch shortcut</string>

@@ -41,6 +41,7 @@ class PendingIntentShuttle: BroadcastReceiver() {
 	class ProfileUnlockCanceledException(message: String) : CancellationException(message)
 
 	override fun onReceive(context: Context, intent: Intent) {
+		Log.d(TAG, "PendingIntentShuttle.onReceive($intent)")
 		if (intent.action.let { it == ACTION_LOCKED_BOOT_COMPLETED || it == ACTION_MY_PACKAGE_REPLACED }) {
 			Log.d(TAG, "Initiated by $intent")
 			if (Users.isOwner()) sendToAllUnlockedProfiles(context)
@@ -96,7 +97,7 @@ class PendingIntentShuttle: BroadcastReceiver() {
 		private fun <R> Continuation<R>.resume(result: Int, extras: Bundle?, procedureClass: Class<*>? = null) = when (result) {
 			Activity.RESULT_OK  -> resume(@Suppress("UNCHECKED_CAST") (extras?.get(null) as R))
 			RESULT_FIRST_USER   -> resumeWithException(extras?.get(null) as Throwable)
-			else                -> resumeWithException(RuntimeException("Error shuttling ${procedureClass ?: ""}")) }
+			else                -> resumeWithException(RuntimeException("Error shuttling ${procedureClass ?: ""} (code $result)")) }
 
 		@ProfileUser fun sendToParentProfileByActivityIfNotYet(context: Context) {
 			if (mSentByActivity) return     // Activity start is relatively heavy and cross-profile toast will be shown.
@@ -121,7 +122,8 @@ class PendingIntentShuttle: BroadcastReceiver() {
 			catch (e: CanceledException) {
 				Log.w(TAG, "Old shuttle (${Users.current().toId()} to ${profile.toId()}) is broken, rebuild now.") }
 
-			if (context.getSystemService(UserManager::class.java)!!.isUserUnlocked(profile))
+			if (try { context.getSystemService(UserManager::class.java)!!.isUserUnlocked(profile) }
+					catch (e: SecurityException) { return@launch Unit.also { Log.w(TAG, "Error checking user unlocked state.", e) } })
 				sendToProfileByActivity(context, profile)
 			else Log.i(TAG, "Skip stopped or locked profile: ${profile.toId()}")
 		}

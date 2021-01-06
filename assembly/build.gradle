@@ -1,5 +1,6 @@
 apply plugin: 'com.android.application'
-apply plugin: 'io.fabric'
+apply plugin: 'com.google.gms.google-services'
+apply plugin: 'com.google.firebase.crashlytics'
 
 android {
     compileSdkVersion this.compileSdkVersion
@@ -7,7 +8,7 @@ android {
     defaultConfig {
         applicationId "com.oasisfeng.island"
         minSdkVersion this.minSdkVersion
-        targetSdkVersion 28     // Private APIs are accessed by module "open" and "fileprovider" (via indirectly loaded remote class)
+        targetSdkVersion 29     // Private APIs are accessed by module "open" and "fileprovider" (via indirectly loaded remote class)
         resConfigs "en", "zh"
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
@@ -15,6 +16,9 @@ android {
     buildFeatures.dataBinding true
 
     buildTypes {
+        debug {
+            firebaseCrashlytics.mappingFileUploadEnabled false
+        }
         release {
             minifyEnabled releaseMinifyEnabled
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
@@ -77,6 +81,3 @@ dependencies {
     // File Provider only
     fileproviderImplementation project(':fileprovider')
 }
-
-// Firebase plug-in
-apply plugin: 'com.google.gms.google-services'
